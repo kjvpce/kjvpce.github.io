@@ -247,3 +247,4 @@ body.pk-open { overflow: hidden; }
 .play3 { flex-wrap: nowrap; gap: 8px; }
 .play3 .btn { flex: 1; padding-left: 4px; padding-right: 4px; white-space: nowrap; }
 #copyBtn:not([hidden]) ~ .nav2 small { display: none; }
+.progress.busy { height: 10px; }

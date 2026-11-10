@@ -165,16 +165,23 @@ const MyRec = {
     if (!js.length && !au.length) throw new Error('沒有可用的檔案（需要 01.opus～66.opus 和 kjv_timings.json）');
     try { if (navigator.storage.persist) await navigator.storage.persist(); } catch (e) { }
     const d = await this.dir();
-    let k = 0;
+    const total = au.reduce((n, f) => n + f.size, 0) || 1;
+    let k = 0, done = 0;
+    const CH = 4 * 1024 * 1024;
     for (const f of au) {
       const b = parseInt(f.name, 10) - 1;
-      if (!(b >= 0 && b < 66)) continue;
+      if (!(b >= 0 && b < 66)) { done += f.size; continue; }
       const name = `${String(b + 1).padStart(2, '0')}.opus`;
       const fh = await d.getFileHandle(name, { create: true });
-      const w = await fh.createWritable(); await w.write(f); await w.close();
+      const w = await fh.createWritable();
+      for (let off = 0; off < f.size; off += CH) {
+        await w.write(f.slice(off, off + CH));
+        const n = Math.min(CH, f.size - off); done += n;
+        if (progress) progress({ k: k + 1, n: au.length, name: f.name, done, total });
+      }
+      await w.close();
       if (this.urls.has(b)) { URL.revokeObjectURL(this.urls.get(b)); this.urls.delete(b); }
       this.books.add(b); k++;
-      if (progress) progress(k, au.length);
     }
     return { audio: k, timings: js.length };
   },
@@ -859,10 +866,12 @@ async function renderSettings() {
     </div>
     <div class="box">
       <div style="margin-bottom:8px">朗讀聲音 Voice</div>
-      ${rc ? `<div class="seg" id="voiceSeg" style="margin-bottom:10px">
-        <button type="button" data-voice="real" class="${settings.voice !== 'ai' ? 'on' : ''}">我的錄音 Recording</button>
-        <button type="button" data-voice="ai" class="${settings.voice === 'ai' ? 'on' : ''}">AI 語音</button>
-      </div><div class="muted" style="font-size:13px;margin-bottom:8px">沒有匯入錄音的書卷會自動改用 AI 語音。</div>` : ''}
+      <div class="seg" id="voiceSeg" style="margin-bottom:6px">
+        <button type="button" data-voice="real" class="${settings.voice !== 'ai' ? 'on' : ''}">真人 Human</button>
+        <button type="button" data-voice="ai" class="${settings.voice === 'ai' ? 'on' : ''}">AI 語音 AI</button>
+      </div>
+      <div class="muted" style="font-size:13px;margin-bottom:10px">${rc ? '真人朗讀：Alexander Scourby（你匯入的錄音）。沒有錄音的書卷或經節會自動改用 AI 語音。' : '還沒有匯入錄音，所以目前都用 AI 語音。請先在上面「我的錄音」匯入。'}</div>
+      <div class="muted" style="font-size:13px;margin-bottom:6px">AI 語音的聲音 AI voice：</div>
       <select id="voiceSel" style="width:100%"></select>
       <div style="margin:12px 0 8px">速度 Speed：<b id="rateVal">${settings.rate}</b>×</div>
       <div class="seg" id="rateSeg">${[0.8, 0.9, 1, 1.1, 1.25].map(r => `<button type="button" data-r="${r}" class="${settings.rate === r ? 'on' : ''}">${r}</button>`).join('')}</div>
@@ -911,12 +920,22 @@ async function renderSettings() {
     settings.voice = btn.dataset.voice; saveSettings(); player.stop();
     $('#voiceSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === btn));
   });
-  $('#recImport').onclick = () => $('#recFile').click();
+  $('#recImport').onclick = () => {
+    $('#recMsg').textContent = '選好檔案後按「選取」。檔案如果在雲端硬碟，手機會先下載，可能要等幾分鐘才會開始匯入。';
+    $('#recFile').click();
+  };
   $('#recFile').onchange = async e => {
     const files = e.target.files; if (!files || !files.length) return;
     const btn = $('#recImport'); btn.disabled = true; btn.textContent = '匯入中… Importing';
+    const bar = $('#recBar'), msg = $('#recMsg');
+    bar.style.width = '0%'; bar.parentElement.classList.add('busy');
+    msg.textContent = `已選 ${files.length} 個檔案，開始匯入… ${files.length} files selected`;
+    const MB = x => (x / 1048576).toFixed(0);
     try {
-      const r = await MyRec.importFiles(files, (k, t) => { const m = $('#recMsg'); if (m) m.textContent = `${k} / ${t}`; });
+      const r = await MyRec.importFiles(files, p => {
+        bar.style.width = (p.done / p.total * 100).toFixed(1) + '%';
+        msg.textContent = `匯入中 ${Math.floor(p.done / p.total * 100)}%（${MB(p.done)} / ${MB(p.total)} MB）　第 ${p.k} / ${p.n} 個：${p.name}　請勿離開這一頁`;
+      });
       settings.voice = 'real'; saveSettings();
       toast(`匯入完成：錄音 ${r.audio} 個、時間表 ${r.timings} 個。 Imported.`, 4000);
     } catch (err) { toast('匯入失敗 Import failed：' + err.message, 6000); }
