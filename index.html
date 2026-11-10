@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KJV Bible 1611</title>
+<meta name="description" content="King James Version (1611, Pure Cambridge Edition) with verse-by-verse read-aloud. 英王欽定本聖經，每節可朗讀。">
+<meta name="theme-color" content="#7a3b1e">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="KJV Bible">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brandbox">
+    <a href="#/" class="brand" aria-label="Home 回首頁"><span class="brand-zh" lang="en">KJV Bible 1611</span><span class="brand-en">英王欽定本</span></a>
+    <span id="hint" class="hint" hidden>長按經節可複製 Long-press to copy</span>
+  </div>
+  <nav class="topnav">
+    <button id="copyBtn" class="copy-btn" type="button" hidden>複製 Copy</button>
+    <a href="#/search" aria-label="搜尋 Search" class="nav2"><span>搜尋</span><small>Search</small></a>
+    <a href="#/bookmarks" aria-label="書籤 Bookmarks" class="nav2"><span>書籤</span><small>Bookmarks</small></a>
+    <a href="#/settings" aria-label="設定 Settings" class="nav2"><span>設定</span><small>Settings</small></a>
+  </nav>
+</header>
+<main id="view" tabindex="-1"></main>
+<div id="player" class="player" hidden>
+  <div class="player-info"><span id="playerLabel"></span><span id="playerStatus" class="muted"></span></div>
+  <div class="player-btns">
+    <button id="playerPause" type="button">暫停 Pause</button>
+    <button id="playerStop" type="button">停止 Stop</button>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script src="books.js"></script>
+<script src="poj.js"></script>
+<script src="picker.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
