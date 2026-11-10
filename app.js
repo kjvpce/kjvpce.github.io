@@ -153,8 +153,46 @@ const MyRec = {
     const f = await (await d.getFileHandle(`${String(b + 1).padStart(2, '0')}.opus`)).getFile();
     const u = URL.createObjectURL(f); this.urls.set(b, u); return u;
   },
+  // 讀 zip（不用解壓到記憶體：「儲存」模式直接切片；壓縮過的逐檔解壓）
+  async unzip(file, progress) {
+    const u32 = (dv, o) => dv.getUint32(o, true), u16 = (dv, o) => dv.getUint16(o, true);
+    const tailLen = Math.min(file.size, 66000);
+    const tail = new DataView(await file.slice(file.size - tailLen).arrayBuffer());
+    let eo = -1;
+    for (let i = tailLen - 22; i >= 0; i--) if (u32(tail, i) === 0x06054b50) { eo = i; break; }
+    if (eo < 0) throw new Error(`${file.name} 不是 zip 檔 Not a zip file`);
+    const count = u16(tail, eo + 10), cdSize = u32(tail, eo + 12), cdOff = u32(tail, eo + 16);
+    if (cdOff === 0xffffffff) throw new Error('zip 檔太大（超過 4 GB）');
+    const cd = new DataView(await file.slice(cdOff, cdOff + cdSize).arrayBuffer());
+    const out = [];
+    let p = 0;
+    for (let i = 0; i < count; i++) {
+      if (u32(cd, p) !== 0x02014b50) throw new Error('zip 檔格式錯誤 Bad zip');
+      const method = u16(cd, p + 10), csize = u32(cd, p + 20), nlen = u16(cd, p + 28), xlen = u16(cd, p + 30), clen = u16(cd, p + 32), lho = u32(cd, p + 42);
+      const name = new TextDecoder().decode(new Uint8Array(cd.buffer, p + 46, nlen)).split('/').pop();
+      p += 46 + nlen + xlen + clen;
+      if (!name || !(/^\d{1,2}\.(opus|ogg)$/i.test(name) || /\.json$/i.test(name))) continue;
+      const lh = new DataView(await file.slice(lho, lho + 30).arrayBuffer());
+      const start = lho + 30 + u16(lh, 26) + u16(lh, 28);
+      out.push({ name, method, start, csize });
+    }
+    const files = [];
+    for (const [i, e] of out.entries()) {
+      const raw = file.slice(e.start, e.start + e.csize);
+      if (e.method === 0) files.push(new File([raw], e.name));
+      else if (e.method === 8 && window.DecompressionStream) {
+        if (progress) progress({ unzip: true, k: i + 1, n: out.length, name: e.name });
+        files.push(new File([await new Response(raw.stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob()], e.name));
+      } else throw new Error(`${e.name}：不支援的壓縮方式 Unsupported zip compression`);
+    }
+    return files;
+  },
   async importFiles(files, progress) {
-    const list = [...files];
+    let list = [];
+    for (const f of files) {
+      if (/\.zip$/i.test(f.name) || f.type === 'application/zip' || f.type === 'application/x-zip-compressed') list.push(...await this.unzip(f, progress));
+      else list.push(f);
+    }
     const js = list.filter(f => /\.json$/i.test(f.name));
     for (const f of js) {
       const data = JSON.parse(await f.text());
@@ -858,9 +896,9 @@ async function renderSettings() {
     </div>
     <div class="box">
       <div style="margin-bottom:8px">我的錄音 My recordings：<b id="recN">${rc}</b> / 66 卷 books</div>
-      <div class="muted" style="font-size:13px;margin-bottom:10px">匯入你自己的錄音檔（01.opus～66.opus）和時間表 kjv_timings.json。檔案只存在這台裝置，不會上傳。<br>Import your own audio files and timings. They stay on this device only.</div>
+      <div class="muted" style="font-size:13px;margin-bottom:10px">選一個 zip 檔（裡面有 01.opus～66.opus 和 kjv_timings.json），或直接選這 67 個檔案。檔案只存在這台裝置，不會上傳。<br>Choose one zip file (or the 67 files). They stay on this device only.</div>
       <div class="row"><button class="btn" id="recImport" type="button">匯入 Import</button>${rc ? '<button class="btn ghost" id="recClear" type="button">移除 Remove</button>' : ''}</div>
-      <input type="file" id="recFile" multiple accept=".opus,.ogg,.json,audio/ogg,application/json" hidden>
+      <input type="file" id="recFile" multiple accept=".zip,.opus,.ogg,.json,application/zip,audio/ogg,application/json" hidden>
       <div class="progress"><div id="recBar" style="width:${Math.round(rc / 66 * 100)}%"></div></div>
       <div id="recMsg" class="muted" style="font-size:14px;margin-top:6px"></div>
     </div>
@@ -933,6 +971,7 @@ async function renderSettings() {
     const MB = x => (x / 1048576).toFixed(0);
     try {
       const r = await MyRec.importFiles(files, p => {
+        if (p.unzip) { msg.textContent = `解壓縮中 Unzipping　第 ${p.k} / ${p.n} 個：${p.name}`; return; }
         bar.style.width = (p.done / p.total * 100).toFixed(1) + '%';
         msg.textContent = `匯入中 ${Math.floor(p.done / p.total * 100)}%（${MB(p.done)} / ${MB(p.total)} MB）　第 ${p.k} / ${p.n} 個：${p.name}　請勿離開這一頁`;
       });
