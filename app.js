@@ -3,10 +3,6 @@
 
 const DATA = 'data/';   // 每卷一個 JSON：[{v:[經文...], h:{節:標題}}, ...]
 // 真人朗讀錄音（何綉圓、吳嘉雄朗讀，信望愛資訊中心，FDL 授權）
-const REAL_BASE = null;  // 真人朗讀錄音之後再加
-const REAL_CACHE = 'real-audio-v1';
-const realPath = (b, c) => `${String(b + 1).padStart(2, '0')}/${String(c).padStart(3, '0')}`;
-const realUrl = (b, c, ext) => REAL_BASE ? REAL_BASE[b < 39 ? 'ot' : 'nt'] + realPath(b, c) + ext : '';
 // 經文中 ⟨ ⟩ 是 KJV 原本印成斜體的補充字
 const fmtVerse = t => esc(t).replace(/⟨/g, '<i>').replace(/⟩/g, '</i>');
 const plain = t => String(t || '').replace(/[⟨⟩]/g, '').replace(/¶\s*/g, '');  // 複製、朗讀、搜尋用（去掉斜體記號與段落符號 ¶）
@@ -124,33 +120,72 @@ function toast(msg, ms = 3500) {
 const isNoteVerse = t => !t || !t.trim();
 const timingMem = new Map();
 async function getTimings(b, c) {
-  if (!REAL_BASE) return null;
-  const key = `tm:${b}:${c}`;
+  if (!MyRec.has(b)) return null;
+  const key = `${b}:${c}`;
   if (timingMem.has(key)) return timingMem.get(key);
-  let raw = await idbGet(key);
-  if (!raw) {
-    try {
-      const r = await fetch(realUrl(b, c, '.json'));
-      if (!r.ok) throw new Error(r.status);
-      raw = await r.json();
-      await idbPut(key, raw);
-    } catch (e) { timingMem.set(key, null); setTimeout(() => timingMem.delete(key), 60000); return null; }
+  const arr = MyRec.tm[b + 1][c - 1], m = new Map();
+  if (arr) for (let i = 0; i * 2 + 1 < arr.length; i++) {
+    const s0 = arr[2 * i], e0 = arr[2 * i + 1];
+    if (s0 >= 0 && e0 > s0) m.set(i + 1, { start: s0 / 100, end: e0 / 100 });
   }
-  const m = new Map();
-  for (const [v, st, en] of raw.verses || []) if (st != null && en != null && en > st) m.set(v, { start: st, end: en });
-  // 註記節沒有被唸出來：拿掉它，並把它的時間併回上一節，避免上一節被切掉
-  try {
-    const ch = await getChapter('cl', b, c);
-    for (const [v, t] of ch) {
-      if (!isNoteVerse(t) || !m.has(v)) continue;
-      const note = m.get(v); m.delete(v);
-      const prev = [...m.keys()].filter(k => k < v).pop();
-      if (prev != null) m.get(prev).end = Math.max(m.get(prev).end, note.end);
-    }
-  } catch (e) { }
   timingMem.set(key, m);
   return m;
 }
+
+/* ---------- 我的錄音：使用者自己匯入、只存在這台裝置（不會上傳） ---------- */
+const MyRec = {
+  books: new Set(), urls: new Map(), tm: null, ready: null,
+  async dir() { const root = await navigator.storage.getDirectory(); return root.getDirectoryHandle('myrec', { create: true }); },
+  init() {
+    return this.ready || (this.ready = (async () => {
+      try {
+        const d = await this.dir();
+        for await (const [name] of d.entries()) { const m = /^(\d\d)\.opus$/.exec(name); if (m) this.books.add(+m[1] - 1); }
+      } catch (e) { }
+      try { this.tm = await idbGet('rec:tm'); } catch (e) { }
+    })());
+  },
+  has(b) { return this.books.has(b) && !!(this.tm && this.tm[b + 1]); },
+  count() { let n = 0; for (const b of this.books) if (this.has(b)) n++; return n; },
+  async url(b) {
+    if (this.urls.has(b)) return this.urls.get(b);
+    const d = await this.dir();
+    const f = await (await d.getFileHandle(`${String(b + 1).padStart(2, '0')}.opus`)).getFile();
+    const u = URL.createObjectURL(f); this.urls.set(b, u); return u;
+  },
+  async importFiles(files, progress) {
+    const list = [...files];
+    const js = list.filter(f => /\.json$/i.test(f.name));
+    for (const f of js) {
+      const data = JSON.parse(await f.text());
+      if (!data || !data.kjv_timings) throw new Error(`${f.name} 不是時間表檔 Not a timings file`);
+      this.tm = Object.assign(this.tm || {}, data.b); await idbPut('rec:tm', this.tm); timingMem.clear();
+    }
+    const au = list.filter(f => /^\d{1,2}\.(opus|ogg)$/i.test(f.name));
+    if (!js.length && !au.length) throw new Error('沒有可用的檔案（需要 01.opus～66.opus 和 kjv_timings.json）');
+    try { if (navigator.storage.persist) await navigator.storage.persist(); } catch (e) { }
+    const d = await this.dir();
+    let k = 0;
+    for (const f of au) {
+      const b = parseInt(f.name, 10) - 1;
+      if (!(b >= 0 && b < 66)) continue;
+      const name = `${String(b + 1).padStart(2, '0')}.opus`;
+      const fh = await d.getFileHandle(name, { create: true });
+      const w = await fh.createWritable(); await w.write(f); await w.close();
+      if (this.urls.has(b)) { URL.revokeObjectURL(this.urls.get(b)); this.urls.delete(b); }
+      this.books.add(b); k++;
+      if (progress) progress(k, au.length);
+    }
+    return { audio: k, timings: js.length };
+  },
+  async clear() {
+    try { const root = await navigator.storage.getDirectory(); await root.removeEntry('myrec', { recursive: true }); } catch (e) { }
+    for (const u of this.urls.values()) URL.revokeObjectURL(u);
+    this.urls.clear(); this.books.clear(); this.tm = null; timingMem.clear();
+    await idbPut('rec:tm', null);
+  }
+};
+MyRec.init();
 const realAudio = new Audio();
 realAudio.preload = 'auto';
 
@@ -196,11 +231,14 @@ const player = {
     } catch (e) { if (tk === this.token) { toast(e.message); this.stop(); } return; }
     if (tk !== this.token) return;
     if (isNoteVerse(text)) { if (this.queue.length === 1) { toast('這一節是註記（或併在上一節），沒有單獨的朗讀。'); this.stop(); } else this.next(); return; }
-    if (settings.voice !== 'ai' && !this.realFailed.has(`${it.b}:${it.c}`)) {
+    await MyRec.init();
+    if (settings.voice !== 'ai' && MyRec.has(it.b) && !this.realFailed.has(`${it.b}:${it.c}`)) {
       const tm = await getTimings(it.b, it.c);
-      if (tk !== this.token) return;
       const seg = tm && tm.get(it.v);
-      if (seg) { this.playReal(it, seg, tm, tk); return; }
+      let url = null;
+      if (seg) { try { url = await MyRec.url(it.b); } catch (e) { this.realFailed.add(`${it.b}:${it.c}`); } }
+      if (tk !== this.token) return;
+      if (seg && url) { this.playReal(it, seg, tm, tk, url); return; }
     }
     if (!text) { this.next(); return; }
     if (this.audio === realAudio) { try { realAudio.pause(); } catch (e) { } }
@@ -221,8 +259,8 @@ const player = {
     if (!nx && this.chIdx < this.chapters.length) { const [nb, nc] = this.chapters[this.chIdx]; getChapter('cl', nb, nc).catch(() => { }); }
 
   },
-  playReal(it, seg, tm, tk) {
-    const a = realAudio, url = realUrl(it.b, it.c, '.m4a');
+  playReal(it, seg, tm, tk, url) {
+    const a = realAudio;
     if (this.audio && this.audio !== a) { try { this.audio.pause(); } catch (e) { } }
     this.audio = a;
     const same = a.src === url;
@@ -235,7 +273,7 @@ const player = {
       this.realFailed.add(`${it.b}:${it.c}`);  // 錄音讀不到 → 這一章改用 AI 語音
       this.playCurrent();
     };
-    a.onplaying = () => { if (tk === this.token) updatePlayerUI('朗讀中（真人）'); };
+    a.onplaying = () => { if (tk === this.token) updatePlayerUI('朗讀中 Reading（Scourby）'); };
     if (!contiguous) {
       const seek = () => { try { a.currentTime = seg.start; } catch (e) { } };
       if (a.readyState >= 1) seek(); else a.addEventListener('loadedmetadata', seek, { once: true });
@@ -249,7 +287,7 @@ const player = {
       const nx = this.queue[this.idx + 1];
       const ns = nx && nx.b === it.b && nx.c === it.c ? tm.get(nx.v) : null;
       if (ns && ns.start - this.segEnd < 1.0 && ns.start >= this.segEnd - 1.0) {
-        this.idx++; this.segEnd = ns.end; markPlaying(nx); updatePlayerUI(this.paused ? '已暫停' : '朗讀中（真人）');
+        this.idx++; this.segEnd = ns.end; markPlaying(nx); updatePlayerUI(this.paused ? '已暫停 Paused' : '朗讀中 Reading（Scourby）');
         it = nx;
         return;
       }
@@ -257,7 +295,7 @@ const player = {
     }, 40);
     // 預先載入下一章的時間表
     if (this.idx + 1 >= this.queue.length && this.chIdx < this.chapters.length) {
-      const [nb, nc] = this.chapters[this.chIdx]; getChapter('cl', nb, nc).catch(() => { }); getTimings(nb, nc);
+      const [nb, nc] = this.chapters[this.chIdx]; getChapter('cl', nb, nc).catch(() => { });
     }
   },
   finishReal(tk) {
@@ -560,53 +598,7 @@ function renderBook(b) {
     <div class="chap-tools"><button class="btn" id="playBook" type="button">▶ 播放整卷 Play book（${n}）</button></div>
     <div class="grid chapters">${links}</div>`;
   $('#playBook').onclick = () => playBooks(b, b + 1, BOOK_EN_NAME[b]);
-  if (REAL_BASE) setupBookDownload(b);
 }
-async function bookCachedCount(b) {
-  try {
-    const cache = await caches.open(REAL_CACHE);
-    let n = 0;
-    for (let c = 1; c <= BOOKS[b][2]; c++) if (await cache.match(realUrl(b, c, '.m4a'))) n++;
-    return n;
-  } catch (e) { return 0; }
-}
-async function setupBookDownload(b) {
-  if (!('caches' in window)) return;
-  const n = BOOKS[b][2];
-  const box = document.createElement('div');
-  box.className = 'box'; box.style.marginTop = '16px';
-  box.innerHTML = `<div>離線收聽：已下載 <b id="bkN">…</b> / ${n} 章真人錄音</div>
-    <div class="row" style="margin-top:8px"><button class="btn ghost" id="bkDl" type="button">下載這卷錄音</button><span id="bkMsg" class="muted" style="font-size:14px"></span></div>
-    <div class="progress"><div id="bkBar"></div></div>`;
-  view().appendChild(box);
-  const show = k => { const el = $('#bkN'); if (el) el.textContent = k; const bar = $('#bkBar'); if (bar) bar.style.width = Math.round(k / n * 100) + '%'; };
-  const me = currentView;
-  const k0 = await bookCachedCount(b);
-  if (currentView !== me) return;
-  show(k0);
-  $('#bkDl').onclick = async () => {
-    const btn = $('#bkDl'); btn.disabled = true; btn.textContent = '下載中…';
-    const cache = await caches.open(REAL_CACHE);
-    let k = 0, fail = 0;
-    for (let c = 1; c <= n; c++) {
-      try {
-        const u = realUrl(b, c, '.m4a');
-        if (!(await cache.match(u))) {
-          const r = await fetch(u);
-          if (!r.ok) throw new Error(r.status);
-          await cache.put(u, r);
-        }
-        await getTimings(b, c);
-        k++;
-      } catch (e) { fail++; }
-      if (currentView.name === 'book' && currentView.b === b) show(k);
-    }
-    const msg = fail ? `有 ${fail} 章下載失敗，可再按一次補下載。` : '下載完成，沒網路也能聽這一卷。';
-    toast(msg, 4000);
-    if (currentView.name === 'book' && currentView.b === b) { const bt = $('#bkDl'); bt.disabled = false; bt.textContent = '下載這卷錄音'; $('#bkMsg').textContent = msg; }
-  };
-}
-
 async function renderChapter(b, c, v) {
   currentView = { name: 'chapter', b, c };
   const [ab, full, n] = BOOKS[b];
@@ -846,7 +838,9 @@ let dlRunning = false;
 async function renderSettings() {
   const me = currentView = { name: 'settings' };
   const n = await countDownloaded();
+  await MyRec.init();
   if (currentView !== me) return;
+  const rc = MyRec.count();
   view().innerHTML = `
     <button class="btn ghost back" id="backBtn" type="button">‹ 返回 Back</button>
     <h1>設定 Settings</h1>
@@ -856,7 +850,19 @@ async function renderSettings() {
       <p class="vtext" style="margin:10px 0 0">For God so loved the world, that he gave his only begotten Son.</p>
     </div>
     <div class="box">
+      <div style="margin-bottom:8px">我的錄音 My recordings：<b id="recN">${rc}</b> / 66 卷 books</div>
+      <div class="muted" style="font-size:13px;margin-bottom:10px">匯入你自己的錄音檔（01.opus～66.opus）和時間表 kjv_timings.json。檔案只存在這台裝置，不會上傳。<br>Import your own audio files and timings. They stay on this device only.</div>
+      <div class="row"><button class="btn" id="recImport" type="button">匯入 Import</button>${rc ? '<button class="btn ghost" id="recClear" type="button">移除 Remove</button>' : ''}</div>
+      <input type="file" id="recFile" multiple accept=".opus,.ogg,.json,audio/ogg,application/json" hidden>
+      <div class="progress"><div id="recBar" style="width:${Math.round(rc / 66 * 100)}%"></div></div>
+      <div id="recMsg" class="muted" style="font-size:14px;margin-top:6px"></div>
+    </div>
+    <div class="box">
       <div style="margin-bottom:8px">朗讀聲音 Voice</div>
+      ${rc ? `<div class="seg" id="voiceSeg" style="margin-bottom:10px">
+        <button type="button" data-voice="real" class="${settings.voice !== 'ai' ? 'on' : ''}">我的錄音 Recording</button>
+        <button type="button" data-voice="ai" class="${settings.voice === 'ai' ? 'on' : ''}">AI 語音</button>
+      </div><div class="muted" style="font-size:13px;margin-bottom:8px">沒有匯入錄音的書卷會自動改用 AI 語音。</div>` : ''}
       <select id="voiceSel" style="width:100%"></select>
       <div style="margin:12px 0 8px">速度 Speed：<b id="rateVal">${settings.rate}</b>×</div>
       <div class="seg" id="rateSeg">${[0.8, 0.9, 1, 1.1, 1.25].map(r => `<button type="button" data-r="${r}" class="${settings.rate === r ? 'on' : ''}">${r}</button>`).join('')}</div>
@@ -901,6 +907,25 @@ async function renderSettings() {
     settings.rate = +btn.dataset.r; saveSettings(); $('#rateVal').textContent = settings.rate;
     $('#rateSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === btn));
   });
+  if ($('#voiceSeg')) $('#voiceSeg').querySelectorAll('button').forEach(btn => btn.onclick = () => {
+    settings.voice = btn.dataset.voice; saveSettings(); player.stop();
+    $('#voiceSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === btn));
+  });
+  $('#recImport').onclick = () => $('#recFile').click();
+  $('#recFile').onchange = async e => {
+    const files = e.target.files; if (!files || !files.length) return;
+    const btn = $('#recImport'); btn.disabled = true; btn.textContent = '匯入中… Importing';
+    try {
+      const r = await MyRec.importFiles(files, (k, t) => { const m = $('#recMsg'); if (m) m.textContent = `${k} / ${t}`; });
+      settings.voice = 'real'; saveSettings();
+      toast(`匯入完成：錄音 ${r.audio} 個、時間表 ${r.timings} 個。 Imported.`, 4000);
+    } catch (err) { toast('匯入失敗 Import failed：' + err.message, 6000); }
+    if (currentView === me) renderSettings();
+  };
+  if ($('#recClear')) $('#recClear').onclick = async () => {
+    if (!confirm('移除這台裝置上的所有錄音？ Remove all recordings from this device?')) return;
+    player.stop(); await MyRec.clear(); settings.voice = 'ai'; saveSettings(); renderSettings();
+  };
   $('#voiceTest').onclick = () => { player.stop(); getAudio('The LORD is my shepherd; I shall not want.').play(); };
 }
 async function downloadAll() {

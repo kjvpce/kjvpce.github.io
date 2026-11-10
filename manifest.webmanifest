@@ -1,6 +1,6 @@
 {
-  "name": "KJV Bible 1611",
-  "short_name": "KJV Bible",
+  "name": "King James Bible Pure Cambridge Edition",
+  "short_name": "KJV PCE",
   "description": "King James Version (1611) with verse-by-verse read-aloud. 英王欽定本聖經。",
   "start_url": "./",
   "scope": "./",
