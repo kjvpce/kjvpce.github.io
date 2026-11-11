@@ -133,29 +133,56 @@ async function getTimings(b, c) {
 }
 
 /* ---------- 我的錄音：使用者自己匯入、只存在這台裝置（不會上傳） ---------- */
+const APP_VER = 'k7';
 const MyRec = {
-  books: new Set(), urls: new Map(), tm: null, ready: null,
+  books: new Set(), urls: new Map(), tm: null, ready: null, where: new Map(),
+  CACHE: 'myrec-v1', key: b => `myrec/${String(b + 1).padStart(2, '0')}.opus`,
   async dir() { const root = await navigator.storage.getDirectory(); return root.getDirectoryHandle('myrec', { create: true }); },
   init() {
     return this.ready || (this.ready = (async () => {
       try {
         const d = await this.dir();
-        for await (const [name] of d.entries()) { const m = /^(\d\d)\.opus$/.exec(name); if (m) this.books.add(+m[1] - 1); }
+        for await (const [name, h] of d.entries()) {
+          const m = /^(\d\d)\.opus$/.exec(name);
+          if (m && (await h.getFile()).size > 0) { this.books.add(+m[1] - 1); this.where.set(+m[1] - 1, 'opfs'); }
+        }
+      } catch (e) { }
+      try {
+        const c = await caches.open(this.CACHE);
+        for (const req of await c.keys()) { const m = /myrec\/(\d\d)\.opus$/.exec(req.url); if (m && !this.books.has(+m[1] - 1)) { this.books.add(+m[1] - 1); this.where.set(+m[1] - 1, 'cache'); } }
       } catch (e) { }
       try { this.tm = await idbGet('rec:tm'); } catch (e) { }
     })());
+  },
+  // 這台裝置能不能用「檔案系統」存（大部分 Chrome 可以）；不行就改存在 Cache
+  async canOpfs() {
+    try {
+      const d = await this.dir();
+      const fh = await d.getFileHandle('_test', { create: true });
+      const w = await fh.createWritable(); await w.write(new Blob(['ok'])); await w.close();
+      await d.removeEntry('_test');
+      return true;
+    } catch (e) { return false; }
   },
   has(b) { return this.books.has(b) && !!(this.tm && this.tm[b + 1]); },
   count() { let n = 0; for (const b of this.books) if (this.has(b)) n++; return n; },
   async url(b) {
     if (this.urls.has(b)) return this.urls.get(b);
-    const d = await this.dir();
-    const f = await (await d.getFileHandle(`${String(b + 1).padStart(2, '0')}.opus`)).getFile();
+    let f;
+    if (this.where.get(b) === 'cache') {
+      const r = await (await caches.open(this.CACHE)).match(this.key(b));
+      if (!r) throw new Error('找不到錄音');
+      f = await r.blob();
+    } else {
+      const d = await this.dir();
+      f = await (await d.getFileHandle(`${String(b + 1).padStart(2, '0')}.opus`)).getFile();
+    }
     const u = URL.createObjectURL(f); this.urls.set(b, u); return u;
   },
   // 讀 zip（不用解壓到記憶體：「儲存」模式直接切片；壓縮過的逐檔解壓）
   async unzip(file, progress) {
     const u32 = (dv, o) => dv.getUint32(o, true), u16 = (dv, o) => dv.getUint16(o, true);
+    if (progress) progress({ stage: `讀取 zip 目錄… Reading zip（${(file.size / 1048576).toFixed(0)} MB）` });
     const tailLen = Math.min(file.size, 66000);
     const tail = new DataView(await file.slice(file.size - tailLen).arrayBuffer());
     let eo = -1;
@@ -176,6 +203,7 @@ const MyRec = {
       const start = lho + 30 + u16(lh, 26) + u16(lh, 28);
       out.push({ name, method, start, csize });
     }
+    if (progress) progress({ stage: `zip 裡找到 ${out.length} 個可用檔案 Found ${out.length} files` });
     const files = [];
     for (const [i, e] of out.entries()) {
       const raw = file.slice(e.start, e.start + e.csize);
@@ -202,7 +230,15 @@ const MyRec = {
     const au = list.filter(f => /^\d{1,2}\.(opus|ogg)$/i.test(f.name));
     if (!js.length && !au.length) throw new Error('沒有可用的檔案（需要 01.opus～66.opus 和 kjv_timings.json）');
     try { if (navigator.storage.persist) await navigator.storage.persist(); } catch (e) { }
-    const d = await this.dir();
+    try {
+      const est = navigator.storage.estimate ? await navigator.storage.estimate() : null;
+      const need = au.reduce((n, f) => n + f.size, 0);
+      if (est && est.quota && est.quota - est.usage < need * 1.05) throw new Error(`手機可用空間不足：需要 ${(need / 1048576).toFixed(0)} MB，網站可用 ${((est.quota - est.usage) / 1048576).toFixed(0)} MB`);
+    } catch (e) { if (/空間不足/.test(e.message)) throw e; }
+    if (progress) progress({ stage: '檢查儲存方式… Checking storage' });
+    const useOpfs = await this.canOpfs();
+    const cache = useOpfs ? null : await caches.open(this.CACHE);
+    const d = useOpfs ? await this.dir() : null;
     const total = au.reduce((n, f) => n + f.size, 0) || 1;
     let k = 0, done = 0;
     const CH = 4 * 1024 * 1024;
@@ -210,14 +246,23 @@ const MyRec = {
       const b = parseInt(f.name, 10) - 1;
       if (!(b >= 0 && b < 66)) { done += f.size; continue; }
       const name = `${String(b + 1).padStart(2, '0')}.opus`;
-      const fh = await d.getFileHandle(name, { create: true });
-      const w = await fh.createWritable();
-      for (let off = 0; off < f.size; off += CH) {
-        await w.write(f.slice(off, off + CH));
-        const n = Math.min(CH, f.size - off); done += n;
+      if (useOpfs) {
+        const fh = await d.getFileHandle(name, { create: true });
+        const w = await fh.createWritable();
+        for (let off = 0; off < f.size; off += CH) {
+          await w.write(f.slice(off, off + CH));
+          const n = Math.min(CH, f.size - off); done += n;
+          if (progress) progress({ k: k + 1, n: au.length, name: f.name, done, total });
+        }
+        await w.close();
+        this.where.set(b, 'opfs');
+      } else {
         if (progress) progress({ k: k + 1, n: au.length, name: f.name, done, total });
+        await cache.put(this.key(b), new Response(f, { headers: { 'Content-Type': 'audio/ogg' } }));
+        done += f.size;
+        if (progress) progress({ k: k + 1, n: au.length, name: f.name, done, total });
+        this.where.set(b, 'cache');
       }
-      await w.close();
       if (this.urls.has(b)) { URL.revokeObjectURL(this.urls.get(b)); this.urls.delete(b); }
       this.books.add(b); k++;
     }
@@ -225,6 +270,8 @@ const MyRec = {
   },
   async clear() {
     try { const root = await navigator.storage.getDirectory(); await root.removeEntry('myrec', { recursive: true }); } catch (e) { }
+    try { await caches.delete(this.CACHE); } catch (e) { }
+    this.where.clear();
     for (const u of this.urls.values()) URL.revokeObjectURL(u);
     this.urls.clear(); this.books.clear(); this.tm = null; timingMem.clear();
     await idbPut('rec:tm', null);
@@ -880,6 +927,7 @@ async function renderBookmarks() {
 
 /* 設定 */
 let dlRunning = false;
+let recNote = '';  // 匯入結果（重畫設定頁後仍顯示）
 async function renderSettings() {
   const me = currentView = { name: 'settings' };
   const n = await countDownloaded();
@@ -900,7 +948,7 @@ async function renderSettings() {
       <div class="row"><button class="btn" id="recImport" type="button">匯入 Import</button>${rc ? '<button class="btn ghost" id="recClear" type="button">移除 Remove</button>' : ''}</div>
       <input type="file" id="recFile" multiple accept=".zip,.opus,.ogg,.json,application/zip,audio/ogg,application/json" hidden>
       <div class="progress"><div id="recBar" style="width:${Math.round(rc / 66 * 100)}%"></div></div>
-      <div id="recMsg" class="muted" style="font-size:14px;margin-top:6px"></div>
+      <div id="recMsg" class="muted" style="font-size:14px;margin-top:6px">${esc(recNote)}</div>
     </div>
     <div class="box">
       <div style="margin-bottom:8px">朗讀聲音 Voice</div>
@@ -931,7 +979,7 @@ async function renderSettings() {
       <div class="progress"><div id="dlBar" style="width:${Math.round(n / 66 * 100)}%"></div></div>
       <div id="dlMsg" class="muted" style="font-size:14px;margin-top:6px"></div>
     </div>
-    <footer class="about">經文 Text：King James Version (1611), Pure Cambridge Edition（公版 Public domain）<br>AI 語音 Voice：本機內建語音 your device's built-in English voice</footer>`;
+    <footer class="about">經文 Text：King James Version (1611), Pure Cambridge Edition（公版 Public domain）<br>AI 語音 Voice：本機內建語音 your device's built-in English voice<br>版本 Version ${APP_VER}</footer>`;
   const setFs = d => { settings.fs = Math.min(32, Math.max(14, settings.fs + d)); saveSettings(); $('#fsVal').textContent = settings.fs; };
   $('#fsDown').onclick = () => setFs(-1);
   $('#fsUp').onclick = () => setFs(+1);
@@ -967,17 +1015,19 @@ async function renderSettings() {
     const btn = $('#recImport'); btn.disabled = true; btn.textContent = '匯入中… Importing';
     const bar = $('#recBar'), msg = $('#recMsg');
     bar.style.width = '0%'; bar.parentElement.classList.add('busy');
-    msg.textContent = `已選 ${files.length} 個檔案，開始匯入… ${files.length} files selected`;
     const MB = x => (x / 1048576).toFixed(0);
+    const sz = [...files].reduce((n, f) => n + f.size, 0);
+    msg.textContent = files.length === 1 ? `已選：${files[0].name}（${MB(sz)} MB），開始匯入…` : `已選 ${files.length} 個檔案（${MB(sz)} MB），開始匯入…`;
     try {
       const r = await MyRec.importFiles(files, p => {
+        if (p.stage) { msg.textContent = p.stage; return; }
         if (p.unzip) { msg.textContent = `解壓縮中 Unzipping　第 ${p.k} / ${p.n} 個：${p.name}`; return; }
         bar.style.width = (p.done / p.total * 100).toFixed(1) + '%';
         msg.textContent = `匯入中 ${Math.floor(p.done / p.total * 100)}%（${MB(p.done)} / ${MB(p.total)} MB）　第 ${p.k} / ${p.n} 個：${p.name}　請勿離開這一頁`;
       });
       settings.voice = 'real'; saveSettings();
-      toast(`匯入完成：錄音 ${r.audio} 個、時間表 ${r.timings} 個。 Imported.`, 4000);
-    } catch (err) { toast('匯入失敗 Import failed：' + err.message, 6000); }
+      recNote = `✔ 匯入完成：錄音 ${r.audio} 個、時間表 ${r.timings} 個。 Imported.`;
+    } catch (err) { recNote = `✘ 匯入失敗 Import failed：${err.name && err.name !== 'Error' ? err.name + '：' : ''}${err.message || err}`; }
     if (currentView === me) renderSettings();
   };
   if ($('#recClear')) $('#recClear').onclick = async () => {
