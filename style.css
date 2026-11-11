@@ -250,7 +250,6 @@ body.pk-open { overflow: hidden; }
 .progress.busy { height: 10px; }
 .sb-full { max-width: 100%; font-size: 13px; font-weight: 700; letter-spacing: .02em; line-height: 1.3; color: var(--fg); white-space: normal; }
 .sb-cn { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 10px; white-space: nowrap; }
-.sb-zh h1 { font-size: 16px; }
 .verses .vsub { list-style: none; font-family: Georgia, "Times New Roman", serif; font-style: italic; font-size: calc(var(--fs) * .85); color: var(--muted); padding: 14px 8px 6px 44px; line-height: 1.5; }
 .verses .vsub i { font-style: normal; }
 .front-links { margin-top: 10px; gap: 8px; flex-wrap: nowrap; }
@@ -267,3 +266,7 @@ body.pk-open { overflow: hidden; }
 .verses .vsub { display: flex; gap: 8px; align-items: flex-start; padding-left: 8px; }
 .verses .vsub .vtext { flex: 1; font-size: inherit; line-height: 1.5; }
 .verses .vsub.playing { background: var(--hl); border-radius: 10px; }
+.book-full { font-family: Georgia, "Times New Roman", serif; font-size: 20px; line-height: 1.35; letter-spacing: .02em; }
+.book-full .h1zh { font-family: inherit; margin-top: 6px; }
+.grid.chapters a { position: relative; min-height: 52px; }
+.grid.chapters a small { position: absolute; right: 5px; bottom: 3px; font-size: 11px; color: var(--muted); font-weight: 400; }

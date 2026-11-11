@@ -172,7 +172,7 @@ function voiceFor(b) {
 }
 
 /* ---------- 我的錄音：使用者自己匯入、只存在這台裝置（不會上傳） ---------- */
-const APP_VER = 'k11';
+const APP_VER = 'k12';
 const MyRec = {
   books: new Set(), urls: new Map(), tm: null, ready: null, where: new Map(),
   CACHE: 'myrec-v1', key: b => `myrec/${String(b + 1).padStart(2, '0')}.opus`,
@@ -743,8 +743,8 @@ function renderBook(b) {
   currentView = { name: 'book', b };
   const [ab, full, n] = BOOKS[b];
   let links = '';
-  for (let c = 1; c <= n; c++) links += `<a href="#/c/${b}/${c}">${c}</a>`;
-  view().innerHTML = `<h1>${esc(BOOK_EN_NAME[b])}<span class="h1zh">${esc(full)}</span></h1>
+  for (let c = 1; c <= n; c++) links += `<a href="#/c/${b}/${c}" aria-label="第 ${c} 章，${BOOK_VC[b][c - 1]} 節">${c}<small>${BOOK_VC[b][c - 1]}</small></a>`;
+  view().innerHTML = `<h1 class="book-full">${esc(BOOK_FULL[b])}<span class="h1zh">${esc(full)}</span></h1>
     <div class="chap-tools"><button class="btn" id="playBook" type="button">▶ 播放整卷 Play book（${n}）</button></div>
     <div class="grid chapters">${links}</div>`;
   $('#playBook').onclick = () => playBooks(b, b + 1, BOOK_EN_NAME[b]);
@@ -801,8 +801,8 @@ async function renderChapter(b, c, v) {
   view().innerHTML = `
     <div class="subbar" id="subbar">
       <button class="sb-title" id="chapTitle" type="button" aria-label="選擇書卷、章、節">
-        <span class="sb-full">${esc(BOOK_FULL[b])}</span>
-        <span class="sb-zh"><h1>${b === 18 ? 'PSALM' : 'CHAPTER'} ${c}</h1><span class="caret">▾</span><span class="sb-cn">${esc(full)} 第 ${c} 章</span></span>
+        <span class="sb-zh"><h1>${esc(BOOK_EN_NAME[b])} ${c}</h1><span class="caret">▾</span></span>
+        <span class="sb-en">${esc(full)} 第 ${c} 章</span>
       </button>
       <button class="sb-nav" id="sbPrev" type="button" aria-label="上一章"${prevChap(b, c) ? '' : ' disabled'}>‹</button>
       <button class="sb-nav" id="sbNext" type="button" aria-label="下一章"${nextChap(b, c) ? '' : ' disabled'}>›</button>
