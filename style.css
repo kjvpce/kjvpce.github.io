@@ -248,3 +248,22 @@ body.pk-open { overflow: hidden; }
 .play3 .btn { flex: 1; padding-left: 4px; padding-right: 4px; white-space: nowrap; }
 #copyBtn:not([hidden]) ~ .nav2 small { display: none; }
 .progress.busy { height: 10px; }
+.sb-full { max-width: 100%; font-size: 13px; font-weight: 700; letter-spacing: .02em; line-height: 1.3; color: var(--fg); white-space: normal; }
+.sb-cn { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 10px; white-space: nowrap; }
+.sb-zh h1 { font-size: 16px; }
+.verses .vsub { list-style: none; font-family: Georgia, "Times New Roman", serif; font-style: italic; font-size: calc(var(--fs) * .85); color: var(--muted); padding: 14px 8px 6px 44px; line-height: 1.5; }
+.verses .vsub i { font-style: normal; }
+.front-links { margin-top: 10px; gap: 8px; flex-wrap: nowrap; }
+.front-links .btn { flex: 1; text-decoration: none; text-align: center; display: flex; flex-direction: column; align-items: center; padding: 8px 4px; font-size: 14px; line-height: 1.25; }
+.front-links .btn small { font-size: 12px; opacity: .8; }
+.tp { text-align: center; padding: 18px 6px 30px; font-family: Georgia, "Times New Roman", serif; }
+.tp-big { font-size: 34px; line-height: 1.15; margin: 10px 0 26px; }
+.tp-line { font-size: 15px; line-height: 1.5; margin: 0 0 18px; letter-spacing: .02em; }
+.ded { font-family: Georgia, "Times New Roman", serif; }
+.ded-p { display: flex; gap: 8px; align-items: flex-start; padding: 8px 4px; border-radius: 10px; }
+.ded-p .vtext { flex: 1; line-height: 1.6; }
+.ded-head .vtext { text-align: center; font-size: calc(var(--fs) * .9); }
+.ded-p.playing { background: var(--hl); }
+.verses .vsub { display: flex; gap: 8px; align-items: flex-start; padding-left: 8px; }
+.verses .vsub .vtext { flex: 1; font-size: inherit; line-height: 1.5; }
+.verses .vsub.playing { background: var(--hl); border-radius: 10px; }

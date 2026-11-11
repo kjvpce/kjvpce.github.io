@@ -75,6 +75,13 @@ async function getChapter(_script, b, c) {
 }
 // 詩篇標題、119 篇的希伯來字母小標題：{節: 文字}
 function getHeads(b, c) { const bk = bookMem.get(b); return (bk && bk[c - 1] && bk[c - 1].h) || {}; }
+// 書卷結尾的附註（保羅書信的 subscript、THE END…）：存在 h 裡、節號大於本章節數
+function subText(b, c) {
+  const bk = bookMem.get(b), ch = bk && bk[c - 1];
+  if (!ch || !ch.h) return '';
+  const k = Object.keys(ch.h).find(k => +k > ch.v.length);
+  return k ? ch.h[k] : '';
+}
 
 /* ---------- 書卷、經節解析 ---------- */
 const abbrIndex = new Map();
@@ -107,7 +114,7 @@ function parseRef(input) {
   if (c2 < c1 || (c2 === c1 && v1 != null && v2 != null && v2 < v1)) return { err: '範圍的結尾在開頭之前，請檢查。' };
   return { b, c1, v1, c2, v2, isRange: !!m[4] };
 }
-const refLabel = (b, c, v) => `${BOOK_EN[b]} ${c}${v ? ':' + v : ''}`;
+const refLabel = (b, c, v) => v === 's' ? `${BOOK_EN[b]} ${c} 附註` : `${BOOK_EN[b]} ${c}${v ? ':' + v : ''}`;
 
 /* ---------- 小提示 ---------- */
 let toastT;
@@ -129,6 +136,8 @@ async function getTimings(b, c) {
     const s0 = arr[2 * i], e0 = arr[2 * i + 1];
     if (s0 >= 0 && e0 > s0) m.set(i + 1, { start: s0 / 100, end: e0 / 100 });
   }
+  const nv = BOOK_VC[b][c - 1];  // 比節數多出來的一組 = 結尾附註
+  if (m.has(nv + 1)) { m.set('s', m.get(nv + 1)); m.delete(nv + 1); }
   timingMem.set(key, m);
   return m;
 }
@@ -151,6 +160,7 @@ async function getFableTimings(b, c) {
   }
   const m = new Map();
   for (const [v, st, en] of raw.verses || []) if (en > st) m.set(v, { start: st, end: en });
+  if (raw.sub) m.set('s', { start: raw.sub[0], end: raw.sub[1] });
   fableMem.set(key, m);
   return m;
 }
@@ -162,7 +172,7 @@ function voiceFor(b) {
 }
 
 /* ---------- 我的錄音：使用者自己匯入、只存在這台裝置（不會上傳） ---------- */
-const APP_VER = 'k8';
+const APP_VER = 'k9';
 const MyRec = {
   books: new Set(), urls: new Map(), tm: null, ready: null, where: new Map(),
   CACHE: 'myrec-v1', key: b => `myrec/${String(b + 1).padStart(2, '0')}.opus`,
@@ -333,7 +343,11 @@ const player = {
         const ch = await getChapter('cl', b, c);
         if (tk !== this.token) return false;
         const vs = ch.filter(([v, t]) => !isNoteVerse(t) && (from == null || v >= from) && (to == null || v <= to));
-        if (vs.length) { this.queue = vs.map(([v]) => ({ b, c, v })); this.idx = 0; return true; }
+        if (vs.length) {
+          this.queue = vs.map(([v]) => ({ b, c, v }));
+          if ((to == null || to >= ch.length) && subText(b, c)) this.queue.push({ b, c, v: 's' });
+          this.idx = 0; return true;
+        }
       } catch (e) { if (tk === this.token) { toast(e.message); this.stop(); } return false; }
     }
     this.stop(); return false;
@@ -348,7 +362,7 @@ const player = {
     try {
       const ch = await getChapter('cl', it.b, it.c);
       const row = ch.find(r => r[0] === it.v);
-      text = row ? row[1] : '';
+      text = it.v === 's' ? subText(it.b, it.c) : row ? row[1] : '';
     } catch (e) { if (tk === this.token) { toast(e.message); this.stop(); } return; }
     if (tk !== this.token) return;
     if (isNoteVerse(text)) { if (this.queue.length === 1) { toast('這一節是註記（或併在上一節），沒有單獨的朗讀。'); this.stop(); } else this.next(); return; }
@@ -541,6 +555,7 @@ async function buildRange(r) {
     if (from > maxV) throw new Error(`${BOOK_EN_NAME[r.b]} ${c} 只有 ${maxV} 節 (verses)。`);
     if (to > maxV) throw new Error(`${BOOK_EN_NAME[r.b]} ${c} 只有 ${maxV} 節 (verses)。`);
     for (const [v, t] of ch) if (v >= from && v <= to && !isNoteVerse(t)) items.push({ b: r.b, c, v });
+    if (to === maxV && r.isRange && subText(r.b, c)) items.push({ b: r.b, c, v: 's' });
   }
   return items;
 }
@@ -686,6 +701,10 @@ function renderHome() {
   view().innerHTML = `
     <div class="box">
       <button class="btn wide" id="jumpBtn" type="button">跳到經節 Go to verse ›</button>
+      <div class="row front-links">
+        <a class="btn ghost" href="#/front/title">📖 THE HOLY BIBLE<small>書名頁</small></a>
+        <a class="btn ghost" href="#/front/dedication">✉ Dedication<small>獻詞</small></a>
+      </div>
     </div>
     <div class="box">
       <div class="muted" style="font-size:14px;margin-bottom:6px">範圍朗讀 Range reading（可跨章、跨卷）</div>
@@ -782,8 +801,8 @@ async function renderChapter(b, c, v) {
   view().innerHTML = `
     <div class="subbar" id="subbar">
       <button class="sb-title" id="chapTitle" type="button" aria-label="選擇書卷、章、節">
-        <span class="sb-zh"><h1>${esc(BOOK_EN_NAME[b])} ${c}</h1><span class="caret">▾</span></span>
-        <span class="sb-en">${esc(full)} 第 ${c} 章</span>
+        <span class="sb-full">${esc(BOOK_FULL[b])}</span>
+        <span class="sb-zh"><h1>${b === 18 ? 'PSALM' : 'CHAPTER'} ${c}</h1><span class="caret">▾</span><span class="sb-cn">${esc(full)} 第 ${c} 章</span></span>
       </button>
       <button class="sb-nav" id="sbPrev" type="button" aria-label="上一章"${prevChap(b, c) ? '' : ' disabled'}>‹</button>
       <button class="sb-nav" id="sbNext" type="button" aria-label="下一章"${nextChap(b, c) ? '' : ' disabled'}>›</button>
@@ -809,12 +828,13 @@ async function renderChapter(b, c, v) {
   catch (e) { if (currentView.b === b && currentView.c === c) $('#verses').innerHTML = `<li class="err">${esc(e.message)}</li>`; return; }
   if (currentView.name !== 'chapter' || currentView.b !== b || currentView.c !== c) return;
   const heads = getHeads(b, c);
+  const tail = Object.keys(heads).filter(k => +k > data.length).map(k => `<li class="vsub" id="vs"><button class="play" type="button" data-v="s" aria-label="朗讀附註">▶</button><div class="vtext">${fmtVerse(heads[k])}</div></li>`).join('');
   $('#verses').innerHTML = data.map(([n2, t]) => (heads[n2] ? `<li class="vhead">${fmtVerse(heads[n2])}</li>` : '') + `
     <li class="verse${v === n2 ? ' hl' : ''}" id="v${n2}">
       <button class="play" type="button" data-v="${n2}" aria-label="朗讀第 ${n2} 節">▶</button>
       <div class="vtext"><span class="vnum">${n2}</span>${fmtVerse(t)}</div>
       <button class="star${isBookmarked(b, c, n2) ? ' on' : ''}" type="button" data-v="${n2}" aria-label="書籤">${isBookmarked(b, c, n2) ? '★' : '☆'}</button>
-    </li>`).join('');
+    </li>`).join('') + tail;
   setupSelection(b, c, data);
   $('#verses').onclick = e => {
     if (Date.now() < sel.suppressUntil) return;
@@ -822,7 +842,7 @@ async function renderChapter(b, c, v) {
     if (sel.active) { if (row) toggleSel(+row.id.slice(1)); return; }
     const p = e.target.closest('.play'), s = e.target.closest('.star');
     if (p) {
-      const vv = +p.dataset.v, cur = player.current();
+      const vv = p.dataset.v === 's' ? 's' : +p.dataset.v, cur = player.current();
       if (cur && cur.b === b && cur.c === c && cur.v === vv && player.queue.length === 1) { player.stop(); return; }
       player.start([{ b, c, v: vv }], refLabel(b, c, vv));
     } else if (s) {
@@ -1140,9 +1160,71 @@ async function downloadAll() {
   toast(failed ? `有 ${failed} 卷失敗，請再按一次。 ${failed} failed, tap again.` : '全本已存好，可離線閱讀。 Saved for offline use.', 5000);
 }
 
+/* ---------- 書名頁、獻詞（取自 KJPCE） ---------- */
+let frontData = null;
+async function getFront() {
+  if (frontData) return frontData;
+  frontData = await idbGet('front');
+  if (!frontData) {
+    const r = await fetch(`${DATA}front.json`);
+    if (!r.ok) throw new Error('讀取失敗，請稍後再試。');
+    frontData = await r.json(); await idbPut('front', frontData);
+  }
+  return frontData;
+}
+const fmtFront = t => esc(t).replace(/&lt;(\/?[bi])&gt;/g, '<$1>').replace(/\n/g, '<br>');
+const dedAudio = new Audio(); dedAudio.preload = 'none';
+let dedTimer = 0, dedParas = null;
+function stopDedication() {
+  try { dedAudio.pause(); } catch (e) { }
+  clearInterval(dedTimer);
+}
+async function renderFront(which) {
+  const me = currentView = { name: 'front', which };
+  view().innerHTML = `<button class="btn ghost back" id="backBtn" type="button">‹ 返回 Back</button><div id="front" class="front"><p class="muted">載入中… Loading</p></div>`;
+  let fr;
+  try { fr = await getFront(); } catch (e) { $('#front').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  if (currentView !== me) return;
+  if (which === 'title') {
+    $('#front').innerHTML = `<div class="tp">${fr.title.map((p, i) => `<p class="${i ? 'tp-line' : 'tp-big'}">${fmtFront(p.t)}</p>`).join('')}</div>`;
+    return;
+  }
+  $('#front').innerHTML = `
+    <div class="chap-tools"><button class="btn" id="dedPlay" type="button">▶ 朗讀獻詞 Read（Fable）</button></div>
+    <div class="ded">${fr.dedication.map((p, i) => `<div class="ded-p${i === 0 ? ' ded-head' : ''}" id="dp${i}">
+      <button class="play" type="button" data-i="${i}" aria-label="從這一段朗讀">▶</button><div class="vtext">${fmtFront(p.t)}</div></div>`).join('')}</div>`;
+  const btn = $('#dedPlay');
+  const mark = () => {
+    const t = dedAudio.currentTime; let cur = -1;
+    if (dedParas) dedParas.forEach(([i, st, en]) => { if (t >= st - 0.05 && t < en + 0.6) cur = i; });
+    document.querySelectorAll('.ded-p').forEach(el => el.classList.toggle('playing', el.id === 'dp' + cur));
+    if (btn) btn.textContent = dedAudio.paused ? '▶ 朗讀獻詞 Read（Fable）' : '❚❚ 暫停 Pause';
+  };
+  const start = async from => {
+    player.stop();
+    try {
+      if (!dedParas) { const r = await fetch(`${FABLE_BASE.ot}00/dedication.json`); if (!r.ok) throw new Error(); dedParas = (await r.json()).paras; }
+    } catch (e) { toast('獻詞朗讀需要網路。 Needs a connection.'); return; }
+    if (!dedAudio.src) dedAudio.src = `${FABLE_BASE.ot}00/dedication.m4a`;
+    const seek = () => { try { dedAudio.currentTime = from; } catch (e) { } };
+    if (from != null) { if (dedAudio.readyState >= 1) seek(); else dedAudio.addEventListener('loadedmetadata', seek, { once: true }); }
+    dedAudio.play().catch(() => { });
+    clearInterval(dedTimer); dedTimer = setInterval(mark, 250);
+  };
+  btn.onclick = () => { if (!dedAudio.paused) { dedAudio.pause(); mark(); } else start(null); };
+  $('#front').querySelector('.ded').onclick = e => {
+    const p = e.target.closest('.play'); if (!p) return;
+    const i = +p.dataset.i;
+    start(dedParas ? dedParas[i][1] : 0).then(() => { if (dedParas && Math.abs(dedAudio.currentTime - dedParas[i][1]) > 1) { try { dedAudio.currentTime = dedParas[i][1]; } catch (e) { } } });
+  };
+  dedAudio.onended = mark;
+  mark();
+}
+
 /* ---------- 路由 ---------- */
 function route() {
   clearSelection();
+  stopDedication();
   const h = location.hash.replace(/^#\/?/, '');
   const p = h.split('/');
   try {
@@ -1154,6 +1236,7 @@ function route() {
     if (p[0] === 'search') return renderSearch(p[1] ? decodeURIComponent(p.slice(1).join('/')) : '');
     if (p[0] === 'bookmarks') return renderBookmarks();
     if (p[0] === 'settings') return renderSettings();
+    if (p[0] === 'front') return renderFront(p[1] === 'dedication' ? 'dedication' : 'title');
     return renderHome();
   } finally {
     updateHint();
@@ -1163,7 +1246,7 @@ function route() {
 // 「返回」：回到進入設定／搜尋／書籤之前的畫面，並捲回原來的位置
 const scrollMem = {};
 let lastMainHash = '#/', backPending = false;
-const isAux = h => /^#\/(settings|search|bookmarks|check)/.test(h);
+const isAux = h => /^#\/(settings|search|bookmarks|check|front)/.test(h);
 function restoreScroll() {
   if (!backPending) return false;
   backPending = false;
