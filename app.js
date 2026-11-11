@@ -14,7 +14,8 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('tb:' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('tb:' + k, JSON.stringify(v)); } catch (e) { } }
 };
-const settings = Object.assign({ fs: 19, theme: 'auto', voice: 'ai', ttsVoice: '', rate: 1 }, store.get('settings', {}));
+const settings = Object.assign({ fs: 19, theme: 'auto', voice: 'fable', ttsVoice: '', rate: 1 }, store.get('settings', {}));
+if (!settings.v2) { if (settings.voice === 'ai') settings.voice = 'fable'; settings.v2 = 1; }  // 舊設定改成預設用 Fable
 function saveSettings() { store.set('settings', settings); applySettings(); }
 function applySettings() {
   document.documentElement.style.setProperty('--fs', settings.fs + 'px');
@@ -132,8 +133,36 @@ async function getTimings(b, c) {
   return m;
 }
 
+/* ---------- AI 朗讀錄音（Kokoro 英式男聲 Fable，放在 kjvpce/audio-ot、audio-nt） ---------- */
+const FABLE_BASE = { ot: '/audio-ot/', nt: '/audio-nt/' };
+const FABLE_CACHE = 'fable-v1';
+const fableUrl = (b, c, ext) => `${FABLE_BASE[b < 39 ? 'ot' : 'nt']}${String(b + 1).padStart(2, '0')}/${String(c).padStart(3, '0')}${ext}`;
+const fableMem = new Map();
+async function getFableTimings(b, c) {
+  const key = `ft:${b}:${c}`;
+  if (fableMem.has(key)) return fableMem.get(key);
+  let raw = await idbGet(key);
+  if (!raw) {
+    try {
+      const r = await fetch(fableUrl(b, c, '.json'));
+      if (!r.ok) throw new Error(r.status);
+      raw = await r.json(); await idbPut(key, raw);
+    } catch (e) { return null; }
+  }
+  const m = new Map();
+  for (const [v, st, en] of raw.verses || []) if (en > st) m.set(v, { start: st, end: en });
+  fableMem.set(key, m);
+  return m;
+}
+// 這一卷用哪一種聲音：fable（預設）、real（自己匯入的 Scourby）、ai（手機內建）
+function voiceFor(b) {
+  if (settings.voice === 'ai') return 'ai';
+  if (settings.voice === 'real' && MyRec.has(b)) return 'real';
+  return 'fable';
+}
+
 /* ---------- 我的錄音：使用者自己匯入、只存在這台裝置（不會上傳） ---------- */
-const APP_VER = 'k7';
+const APP_VER = 'k8';
 const MyRec = {
   books: new Set(), urls: new Map(), tm: null, ready: null, where: new Map(),
   CACHE: 'myrec-v1', key: b => `myrec/${String(b + 1).padStart(2, '0')}.opus`,
@@ -324,13 +353,21 @@ const player = {
     if (tk !== this.token) return;
     if (isNoteVerse(text)) { if (this.queue.length === 1) { toast('這一節是註記（或併在上一節），沒有單獨的朗讀。'); this.stop(); } else this.next(); return; }
     await MyRec.init();
-    if (settings.voice !== 'ai' && MyRec.has(it.b) && !this.realFailed.has(`${it.b}:${it.c}`)) {
+    let mode = voiceFor(it.b);
+    if (mode === 'real' && !this.realFailed.has(`real:${it.b}:${it.c}`)) {
       const tm = await getTimings(it.b, it.c);
       const seg = tm && tm.get(it.v);
       let url = null;
-      if (seg) { try { url = await MyRec.url(it.b); } catch (e) { this.realFailed.add(`${it.b}:${it.c}`); } }
+      if (seg) { try { url = await MyRec.url(it.b); } catch (e) { this.realFailed.add(`real:${it.b}:${it.c}`); } }
       if (tk !== this.token) return;
-      if (seg && url) { this.playReal(it, seg, tm, tk, url); return; }
+      if (seg && url) { this.playReal(it, seg, tm, tk, url, 'real'); return; }
+      mode = 'fable';  // 這一節沒有錄音 → 改用 Fable
+    }
+    if (mode === 'fable' && !this.realFailed.has(`fable:${it.b}:${it.c}`)) {
+      const tm = await getFableTimings(it.b, it.c);
+      if (tk !== this.token) return;
+      const seg = tm && tm.get(it.v);
+      if (seg) { this.playReal(it, seg, tm, tk, new URL(fableUrl(it.b, it.c, '.m4a'), location.href).href, 'fable'); return; }
     }
     if (!text) { this.next(); return; }
     if (this.audio === realAudio) { try { realAudio.pause(); } catch (e) { } }
@@ -351,7 +388,8 @@ const player = {
     if (!nx && this.chIdx < this.chapters.length) { const [nb, nc] = this.chapters[this.chIdx]; getChapter('cl', nb, nc).catch(() => { }); }
 
   },
-  playReal(it, seg, tm, tk, url) {
+  playReal(it, seg, tm, tk, url, mode) {
+    const label = mode === 'fable' ? '朗讀中 Reading（Fable）' : '朗讀中 Reading（Scourby）';
     const a = realAudio;
     if (this.audio && this.audio !== a) { try { this.audio.pause(); } catch (e) { } }
     this.audio = a;
@@ -362,10 +400,10 @@ const player = {
     a.onended = () => { if (tk === this.token) this.finishReal(tk); };
     a.onerror = () => {
       if (tk !== this.token) return;
-      this.realFailed.add(`${it.b}:${it.c}`);  // 錄音讀不到 → 這一章改用 AI 語音
+      this.realFailed.add(`${mode}:${it.b}:${it.c}`);  // 錄音讀不到 → 這一章改用別的聲音
       this.playCurrent();
     };
-    a.onplaying = () => { if (tk === this.token) updatePlayerUI('朗讀中 Reading（Scourby）'); };
+    a.onplaying = () => { if (tk === this.token) updatePlayerUI(label); };
     if (!contiguous) {
       const seek = () => { try { a.currentTime = seg.start; } catch (e) { } };
       if (a.readyState >= 1) seek(); else a.addEventListener('loadedmetadata', seek, { once: true });
@@ -379,7 +417,7 @@ const player = {
       const nx = this.queue[this.idx + 1];
       const ns = nx && nx.b === it.b && nx.c === it.c ? tm.get(nx.v) : null;
       if (ns && ns.start - this.segEnd < 1.0 && ns.start >= this.segEnd - 1.0) {
-        this.idx++; this.segEnd = ns.end; markPlaying(nx); updatePlayerUI(this.paused ? '已暫停 Paused' : '朗讀中 Reading（Scourby）');
+        this.idx++; this.segEnd = ns.end; markPlaying(nx); updatePlayerUI(this.paused ? '已暫停 Paused' : label);
         it = nx;
         return;
       }
@@ -388,6 +426,7 @@ const player = {
     // 預先載入下一章的時間表
     if (this.idx + 1 >= this.queue.length && this.chIdx < this.chapters.length) {
       const [nb, nc] = this.chapters[this.chIdx]; getChapter('cl', nb, nc).catch(() => { });
+      if (mode === 'fable') getFableTimings(nb, nc);
     }
   },
   finishReal(tk) {
@@ -669,7 +708,7 @@ function renderHome() {
     ${last ? `<p><a href="#/c/${last.b}/${last.c}">繼續閱讀 Continue：${esc(BOOK_EN_NAME[last.b])} ${last.c}｜${esc(BOOKS[last.b][1])}</a></p>` : ''}
     <h2>舊約 Old Testament（39）</h2><div class="hgrid">${grid(0, OT_COUNT)}</div>
     <h2>新約 New Testament（27）</h2><div class="hgrid">${grid(OT_COUNT, 66)}</div>
-    <footer class="about">經文 Text：King James Version (1611), Pure Cambridge Edition（公版 Public domain）<br>AI 語音 Voice：本機內建語音 your device's built-in English voice</footer>`;
+    <footer class="about">經文 Text：King James Version (1611), Pure Cambridge Edition（公版 Public domain）<br>AI 朗讀 Voice：Kokoro（bm_fable，Apache 2.0）</footer>`;
   $('#jumpBtn').onclick = () => openJump(last ? { b: last.b, c: last.c } : null);
   fitBookNames();
   setupRangeBox();
@@ -690,6 +729,51 @@ function renderBook(b) {
     <div class="chap-tools"><button class="btn" id="playBook" type="button">▶ 播放整卷 Play book（${n}）</button></div>
     <div class="grid chapters">${links}</div>`;
   $('#playBook').onclick = () => playBooks(b, b + 1, BOOK_EN_NAME[b]);
+  setupBookDownload(b);
+}
+async function bookCachedCount(b) {
+  try {
+    const cache = await caches.open(FABLE_CACHE);
+    let n = 0;
+    for (let c = 1; c <= BOOKS[b][2]; c++) if (await cache.match(new URL(fableUrl(b, c, '.m4a'), location.href).href)) n++;
+    return n;
+  } catch (e) { return 0; }
+}
+async function setupBookDownload(b) {
+  if (!('caches' in window)) return;
+  const n = BOOKS[b][2];
+  const box = document.createElement('div');
+  box.className = 'box'; box.style.marginTop = '16px';
+  box.innerHTML = `<div>離線收聽 Offline：已下載 <b id="bkN">…</b> / ${n} 章 Fable 朗讀</div>
+    <div class="row" style="margin-top:8px"><button class="btn ghost" id="bkDl" type="button">下載這卷 Download</button><span id="bkMsg" class="muted" style="font-size:14px"></span></div>
+    <div class="progress"><div id="bkBar"></div></div>`;
+  view().appendChild(box);
+  const show = k => { const el = $('#bkN'); if (el) el.textContent = k; const bar = $('#bkBar'); if (bar) bar.style.width = Math.round(k / n * 100) + '%'; };
+  const me = currentView;
+  const k0 = await bookCachedCount(b);
+  if (currentView !== me) return;
+  show(k0);
+  $('#bkDl').onclick = async () => {
+    const btn = $('#bkDl'); btn.disabled = true; btn.textContent = '下載中… Downloading';
+    const cache = await caches.open(FABLE_CACHE);
+    let k = 0, fail = 0;
+    for (let c = 1; c <= n; c++) {
+      try {
+        const u = new URL(fableUrl(b, c, '.m4a'), location.href).href;
+        if (!(await cache.match(u))) {
+          const r = await fetch(u, { cache: 'no-store' });
+          if (!r.ok) throw new Error(r.status);
+          await cache.put(u, r);
+        }
+        if (!(await getFableTimings(b, c))) throw new Error('timings');
+        k++;
+      } catch (e) { fail++; }
+      if (currentView.name === 'book' && currentView.b === b) show(k);
+    }
+    const msg = fail ? `有 ${fail} 章下載失敗，可再按一次補下載。` : '下載完成，沒網路也能聽這一卷。 Saved for offline.';
+    toast(msg, 4000);
+    if (currentView.name === 'book' && currentView.b === b) { const bt = $('#bkDl'); bt.disabled = false; bt.textContent = '下載這卷 Download'; $('#bkMsg').textContent = msg; }
+  };
 }
 async function renderChapter(b, c, v) {
   currentView = { name: 'chapter', b, c };
@@ -953,16 +1037,17 @@ async function renderSettings() {
     <div class="box">
       <div style="margin-bottom:8px">朗讀聲音 Voice</div>
       <div class="seg" id="voiceSeg" style="margin-bottom:6px">
-        <button type="button" data-voice="real" class="${settings.voice !== 'ai' ? 'on' : ''}">真人 Human</button>
-        <button type="button" data-voice="ai" class="${settings.voice === 'ai' ? 'on' : ''}">AI 語音 AI</button>
+        <button type="button" data-voice="fable" class="${settings.voice === 'fable' ? 'on' : ''}">Fable</button>
+        <button type="button" data-voice="real" class="${settings.voice === 'real' ? 'on' : ''}">Scourby</button>
+        <button type="button" data-voice="ai" class="${settings.voice === 'ai' ? 'on' : ''}">手機 Device</button>
       </div>
-      <div class="muted" style="font-size:13px;margin-bottom:10px">${rc ? '真人朗讀：Alexander Scourby（你匯入的錄音）。沒有錄音的書卷或經節會自動改用 AI 語音。' : '還沒有匯入錄音，所以目前都用 AI 語音。請先在上面「我的錄音」匯入。'}</div>
-      <div class="muted" style="font-size:13px;margin-bottom:6px">AI 語音的聲音 AI voice：</div>
+      <div class="muted" style="font-size:13px;margin-bottom:10px">Fable：AI 英式男聲，預先錄好，需要網路或先下載該卷。<br>Scourby：真人朗讀，${rc ? `已匯入 ${rc} 卷。` : '需要先在上面「我的錄音」匯入。'}沒有錄音的地方改用 Fable。<br>手機：用手機內建語音，不需網路。</div>
+      <div class="muted" style="font-size:13px;margin-bottom:6px">手機語音的聲音 Device voice：</div>
       <select id="voiceSel" style="width:100%"></select>
       <div style="margin:12px 0 8px">速度 Speed：<b id="rateVal">${settings.rate}</b>×</div>
       <div class="seg" id="rateSeg">${[0.8, 0.9, 1, 1.1, 1.25].map(r => `<button type="button" data-r="${r}" class="${settings.rate === r ? 'on' : ''}">${r}</button>`).join('')}</div>
       <div class="row" style="margin-top:10px"><button class="btn ghost" id="voiceTest" type="button">▶ 試聽 Test</button></div>
-      <div class="muted" style="font-size:13px;margin-top:6px">用手機／電腦內建的英文語音；可選的聲音依裝置而不同。真人朗讀之後會加入。<br>Uses your device's English voices. Human narration coming later.</div>
+      <div class="muted" style="font-size:13px;margin-top:6px">手機語音可選的聲音依裝置而不同。 Device voices vary by phone.</div>
     </div>
     <div class="box">
       <div style="margin-bottom:8px">外觀 Theme</div>
@@ -979,7 +1064,7 @@ async function renderSettings() {
       <div class="progress"><div id="dlBar" style="width:${Math.round(n / 66 * 100)}%"></div></div>
       <div id="dlMsg" class="muted" style="font-size:14px;margin-top:6px"></div>
     </div>
-    <footer class="about">經文 Text：King James Version (1611), Pure Cambridge Edition（公版 Public domain）<br>AI 語音 Voice：本機內建語音 your device's built-in English voice<br>版本 Version ${APP_VER}</footer>`;
+    <footer class="about">經文 Text：King James Version (1611), Pure Cambridge Edition（公版 Public domain）<br>AI 朗讀 Voice：Kokoro（bm_fable，Apache 2.0）<br>版本 Version ${APP_VER}</footer>`;
   const setFs = d => { settings.fs = Math.min(32, Math.max(14, settings.fs + d)); saveSettings(); $('#fsVal').textContent = settings.fs; };
   $('#fsDown').onclick = () => setFs(-1);
   $('#fsUp').onclick = () => setFs(+1);
@@ -1032,7 +1117,7 @@ async function renderSettings() {
   };
   if ($('#recClear')) $('#recClear').onclick = async () => {
     if (!confirm('移除這台裝置上的所有錄音？ Remove all recordings from this device?')) return;
-    player.stop(); await MyRec.clear(); settings.voice = 'ai'; saveSettings(); renderSettings();
+    player.stop(); await MyRec.clear(); settings.voice = 'fable'; saveSettings(); renderSettings();
   };
   $('#voiceTest').onclick = () => { player.stop(); getAudio('The LORD is my shepherd; I shall not want.').play(); };
 }
