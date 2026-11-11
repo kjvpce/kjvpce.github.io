@@ -148,7 +148,7 @@ const FABLE_CACHE = 'fable-v1';
 const fableUrl = (b, c, ext) => `${FABLE_BASE[b < 39 ? 'ot' : 'nt']}${String(b + 1).padStart(2, '0')}/${String(c).padStart(3, '0')}${ext}`;
 const fableMem = new Map();
 async function getFableTimings(b, c) {
-  const key = `ft:${b}:${c}`;
+  const key = `ft2:${b}:${c}`;
   if (fableMem.has(key)) return fableMem.get(key);
   let raw = await idbGet(key);
   if (!raw) {
@@ -172,7 +172,7 @@ function voiceFor(b) {
 }
 
 /* ---------- 我的錄音：使用者自己匯入、只存在這台裝置（不會上傳） ---------- */
-const APP_VER = 'k9';
+const APP_VER = 'k10';
 const MyRec = {
   books: new Set(), urls: new Map(), tm: null, ready: null, where: new Map(),
   CACHE: 'myrec-v1', key: b => `myrec/${String(b + 1).padStart(2, '0')}.opus`,
@@ -1200,22 +1200,22 @@ async function renderFront(which) {
     document.querySelectorAll('.ded-p').forEach(el => el.classList.toggle('playing', el.id === 'dp' + cur));
     if (btn) btn.textContent = dedAudio.paused ? '▶ 朗讀獻詞 Read（Fable）' : '❚❚ 暫停 Pause';
   };
-  const start = async from => {
+  const start = async idx => {
     player.stop();
     try {
       if (!dedParas) { const r = await fetch(`${FABLE_BASE.ot}00/dedication.json`); if (!r.ok) throw new Error(); dedParas = (await r.json()).paras; }
     } catch (e) { toast('獻詞朗讀需要網路。 Needs a connection.'); return; }
     if (!dedAudio.src) dedAudio.src = `${FABLE_BASE.ot}00/dedication.m4a`;
+    const from = idx != null ? dedParas[idx][1] : null;
     const seek = () => { try { dedAudio.currentTime = from; } catch (e) { } };
     if (from != null) { if (dedAudio.readyState >= 1) seek(); else dedAudio.addEventListener('loadedmetadata', seek, { once: true }); }
     dedAudio.play().catch(() => { });
     clearInterval(dedTimer); dedTimer = setInterval(mark, 250);
   };
-  btn.onclick = () => { if (!dedAudio.paused) { dedAudio.pause(); mark(); } else start(null); };
+  btn.onclick = () => { if (!dedAudio.paused) { dedAudio.pause(); mark(); } else start(dedAudio.currentTime > 0 ? null : 0); };
   $('#front').querySelector('.ded').onclick = e => {
     const p = e.target.closest('.play'); if (!p) return;
-    const i = +p.dataset.i;
-    start(dedParas ? dedParas[i][1] : 0).then(() => { if (dedParas && Math.abs(dedAudio.currentTime - dedParas[i][1]) > 1) { try { dedAudio.currentTime = dedParas[i][1]; } catch (e) { } } });
+    start(+p.dataset.i);
   };
   dedAudio.onended = mark;
   mark();
