@@ -1,5 +1,5 @@
 // 離線支援：存下 app 本身（經文資料檔由 app 存在 IndexedDB）
-const VERSION = 'k10';
+const VERSION = 'k11';
 const SHELL = 'shell-' + VERSION;
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'books.js', 'poj.js', 'picker.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png'];
 

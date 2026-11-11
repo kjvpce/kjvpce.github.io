@@ -172,7 +172,7 @@ function voiceFor(b) {
 }
 
 /* ---------- 我的錄音：使用者自己匯入、只存在這台裝置（不會上傳） ---------- */
-const APP_VER = 'k10';
+const APP_VER = 'k11';
 const MyRec = {
   books: new Set(), urls: new Map(), tm: null, ready: null, where: new Map(),
   CACHE: 'myrec-v1', key: b => `myrec/${String(b + 1).padStart(2, '0')}.opus`,
@@ -916,7 +916,7 @@ function updateHint() {
   h.hidden = currentView.name !== 'chapter';
   h.textContent = sel.active ? '點其他經節可加選 Tap more verses' : '長按經節可複製 Long-press to copy';
 }
-// 格式：經文 經文 ... 經文 John 3:16-17,20 (KJV)
+// 格式：經文 經文 ... 經文 John 3:16-17,20 (KJVPCE)
 function selectionText() {
   const rows = sel.data.filter(([v]) => sel.set.has(v));
   const order = sel.data.map(([v]) => v);
@@ -928,7 +928,7 @@ function selectionText() {
   }
   const text = groups.map(g => g.texts.join(' ')).join(' ... ');
   const ref = groups.map(g => `${g.first}${g.last !== g.first ? '-' + g.last : ''}`).join(',');
-  return `${text} ${BOOK_EN_NAME[sel.b]} ${sel.c}:${ref} (KJV)`;
+  return `${text} ${BOOK_EN_NAME[sel.b]} ${sel.c}:${ref} (KJVPCE)`;
 }
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch (e) { }
