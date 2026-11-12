@@ -284,3 +284,5 @@ body.pk-open { overflow: hidden; }
 .pl-row { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
 .pl-row #playerLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-go { color: var(--accent); font-size: 14px; flex-shrink: 0; }
+.player-btns { gap: 6px; }
+.player-btns button { padding: 8px 10px; min-width: 64px; }
