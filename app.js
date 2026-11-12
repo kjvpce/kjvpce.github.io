@@ -172,7 +172,7 @@ function voiceFor(b) {
 }
 
 /* ---------- 我的錄音：使用者自己匯入、只存在這台裝置（不會上傳） ---------- */
-const APP_VER = 'v1.016';  // 版本編號：v1.XXX，遇到 13 跳過
+const APP_VER = 'v1.017';  // 版本編號：v1.XXX，遇到 13 跳過
 const MyRec = {
   books: new Set(), urls: new Map(), tm: null, ready: null, where: new Map(),
   CACHE: 'myrec-v1', key: b => `myrec/${String(b + 1).padStart(2, '0')}.opus`,
@@ -356,7 +356,7 @@ const player = {
     const tk = ++this.token;
     const it = this.queue[this.idx];
     if (!it) { this.stop(); return; }
-    updatePlayerUI('準備中… Loading');
+    updatePlayerUI(this.paused ? 'Paused' : 'Loading…');
     markPlaying(it);
     let text;
     try {
@@ -394,16 +394,16 @@ const player = {
       toast('這台裝置沒有可用的英文語音。 No English voice is available on this device.');
       this.stop();
     };
-    a.onplaying = () => { if (tk === this.token) updatePlayerUI('朗讀中 Reading'); };
+    a.onplaying = () => { if (tk === this.token) updatePlayerUI('Reading'); };
     try { a.currentTime = 0; } catch (e) { }
-    if (!this.paused) a.play().catch(err => { if (tk === this.token && err.name !== 'AbortError') { updatePlayerUI('請按 Resume 繼續'); this.paused = true; $('#playerPause').textContent = 'Resume'; } });
+    if (!this.paused) a.play().catch(err => { if (tk === this.token && err.name !== 'AbortError') { updatePlayerUI('Tap Resume'); this.paused = true; $('#playerPause').textContent = 'Resume'; } });
     // 預先載入下一節
     const nx = this.queue[this.idx + 1];
     if (!nx && this.chIdx < this.chapters.length) { const [nb, nc] = this.chapters[this.chIdx]; getChapter('cl', nb, nc).catch(() => { }); }
 
   },
   playReal(it, seg, tm, tk, url, mode) {
-    const label = mode === 'fable' ? '朗讀中 Reading（Fable）' : '朗讀中 Reading（Scourby）';
+    const label = mode === 'fable' ? 'Reading · Fable' : 'Reading · Scourby';
     const a = realAudio;
     if (this.audio && this.audio !== a) { try { this.audio.pause(); } catch (e) { } }
     this.audio = a;
@@ -422,7 +422,7 @@ const player = {
       const seek = () => { try { a.currentTime = seg.start; } catch (e) { } };
       if (a.readyState >= 1) seek(); else a.addEventListener('loadedmetadata', seek, { once: true });
     }
-    if (!this.paused) a.play().catch(err => { if (tk === this.token && err.name !== 'AbortError') { updatePlayerUI('請按 Resume 繼續'); this.paused = true; $('#playerPause').textContent = 'Resume'; } });
+    if (!this.paused) a.play().catch(err => { if (tk === this.token && err.name !== 'AbortError') { updatePlayerUI('Tap Resume'); this.paused = true; $('#playerPause').textContent = 'Resume'; } });
     clearInterval(this.watch);
     this.watch = setInterval(() => {
       if (tk !== this.token) { clearInterval(this.watch); return; }
@@ -431,7 +431,7 @@ const player = {
       const nx = this.queue[this.idx + 1];
       const ns = nx && nx.b === it.b && nx.c === it.c ? tm.get(nx.v) : null;
       if (ns && ns.start - this.segEnd < 1.0 && ns.start >= this.segEnd - 1.0) {
-        this.idx++; this.segEnd = ns.end; markPlaying(nx); updatePlayerUI(this.paused ? '已暫停 Paused' : label);
+        this.idx++; this.segEnd = ns.end; markPlaying(nx); updatePlayerUI(this.paused ? 'Paused' : label);
         it = nx;
         return;
       }
@@ -462,7 +462,27 @@ const player = {
     this.paused = !this.paused;
     $('#playerPause').textContent = this.paused ? 'Resume' : 'Pause';
     if (this.audio) { if (this.paused) this.audio.pause(); else this.audio.play().catch(() => { }); }
-    updatePlayerUI(this.paused ? '已暫停 Paused' : '朗讀中 Reading');
+    updatePlayerUI(this.paused ? 'Paused' : 'Reading');
+  },
+  // ⏮ / ⏭：上一節、下一節（範圍播放時才有）
+  async skip(d) {
+    if (!this.active) return;
+    this.token++; clearInterval(this.watch);
+    if (this.audio) { try { this.audio.pause(); } catch (e) { } }
+    if (d > 0) {
+      if (this.idx + 1 < this.queue.length) this.idx++;
+      else if (this.chIdx < this.chapters.length) { if (!(await this.loadNextChapter())) return; }
+      else { this.stop(); return; }
+    } else {
+      if (this.idx > 0) this.idx--;
+      else if (this.chIdx >= 2) {
+        this.chIdx -= 2;
+        if (!(await this.loadNextChapter())) return;
+        this.idx = this.queue.length - 1;
+      }
+    }
+    await this.playCurrent();
+    if (this.paused) updatePlayerUI('Paused');
   },
   stop(silent) {
     this.token++;
@@ -520,8 +540,13 @@ function updatePlayerUI(status) {
   if (!it) return;
   const total = player.queue.length;
   const long = player.chTotal > 1;
-  $('#playerLabel').textContent = refLabel(it.b, it.c, it.v) + (!long && total > 1 ? `（${player.idx + 1}/${total}）` : '');
-  $('#playerStatus').textContent = (long ? `${player.label}・${player.chIdx}/${player.chTotal}　` : '') + (status || '');
+  $('#playerLabel').textContent = refLabel(it.b, it.c, it.v);
+  // 數字放前面（就算太長被截掉，也是後面的狀態字被截）
+  // 整卷／全本播放：只放「節進度 · 章進度」兩組數字，窄手機也放得下
+  $('#playerStatus').textContent = long ? `${player.idx + 1}/${total} · ${player.chIdx}/${player.chTotal}${player.paused ? ' · Paused' : ''}`
+    : [total > 1 ? `${player.idx + 1}/${total}` : '', status || ''].filter(Boolean).join(' · ');
+  const multi = total > 1 || long;
+  $('#playerPrev').hidden = $('#playerNext').hidden = !multi;
 }
 function markPlaying(it) {
   document.querySelectorAll('.verse.playing').forEach(el => el.classList.remove('playing'));
@@ -541,6 +566,8 @@ function markPlaying(it) {
   }
 }
 $('#playerPause').onclick = () => player.togglePause();
+$('#playerPrev').onclick = () => player.skip(-1);
+$('#playerNext').onclick = () => player.skip(1);
 // 點左下角「正在播放的經節」→ 經文畫面跳到那一節
 function goToPlaying() {
   const it = player.current();
