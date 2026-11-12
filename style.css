@@ -279,3 +279,8 @@ body.pk-open { overflow: hidden; }
 .modal-card { background: var(--card); color: var(--fg); border-radius: 14px; padding: 18px; max-width: 360px; width: 100%; box-shadow: 0 8px 30px rgba(0,0,0,.3); }
 .modal-card h2 { margin: 0 0 10px; font-size: 18px; color: var(--fg); }
 .modal-card ol { padding-left: 20px; line-height: 1.8; margin: 0 0 10px; }
+.player-info { cursor: pointer; border-radius: 8px; padding: 2px 6px; margin-left: -6px; -webkit-tap-highlight-color: transparent; }
+.player-info:active { background: var(--chip); }
+.pl-row { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+.pl-row #playerLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-go { color: var(--accent); font-size: 14px; flex-shrink: 0; }

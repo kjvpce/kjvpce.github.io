@@ -172,7 +172,7 @@ function voiceFor(b) {
 }
 
 /* ---------- 我的錄音：使用者自己匯入、只存在這台裝置（不會上傳） ---------- */
-const APP_VER = 'v1.014';  // 版本編號：v1.XXX，遇到 13 跳過
+const APP_VER = 'v1.015';  // 版本編號：v1.XXX，遇到 13 跳過
 const MyRec = {
   books: new Set(), urls: new Map(), tm: null, ready: null, where: new Map(),
   CACHE: 'myrec-v1', key: b => `myrec/${String(b + 1).padStart(2, '0')}.opus`,
@@ -541,6 +541,19 @@ function markPlaying(it) {
   }
 }
 $('#playerPause').onclick = () => player.togglePause();
+// 點左下角「正在播放的經節」→ 經文畫面跳到那一節
+function goToPlaying() {
+  const it = player.current();
+  if (!it) return;
+  if (currentView.name === 'chapter' && currentView.b === it.b && currentView.c === it.c) {
+    const el = document.getElementById('v' + it.v);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } else {
+    location.hash = it.v === 's' ? `#/c/${it.b}/${it.c}` : `#/c/${it.b}/${it.c}/${it.v}`;
+  }
+}
+$('#playerInfo').onclick = goToPlaying;
+$('#playerInfo').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToPlaying(); } };
 $('#playerStop').onclick = () => player.stop();
 
 async function buildRange(r) {
