@@ -270,3 +270,12 @@ body.pk-open { overflow: hidden; }
 .book-full .h1zh { font-family: inherit; margin-top: 6px; }
 .grid.chapters a { position: relative; min-height: 52px; }
 .grid.chapters a small { position: absolute; right: 5px; bottom: 3px; font-size: 11px; color: var(--muted); font-weight: 400; }
+.install-btn { display: flex; flex-direction: column; align-items: center; line-height: 1.1; border: 1.5px solid var(--accent-fg); border-radius: 8px; background: transparent; color: var(--accent-fg); font: inherit; font-size: 13px; padding: 3px 6px; flex-shrink: 0; }
+.install-btn small { font-size: 10px; opacity: .9; }
+.install-btn.done { opacity: .75; border-style: dashed; }
+#copyBtn:not([hidden]) ~ .install-btn { display: none; }
+.brand-cn { letter-spacing: .08em; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
+.modal-card { background: var(--card); color: var(--fg); border-radius: 14px; padding: 18px; max-width: 360px; width: 100%; box-shadow: 0 8px 30px rgba(0,0,0,.3); }
+.modal-card h2 { margin: 0 0 10px; font-size: 18px; color: var(--fg); }
+.modal-card ol { padding-left: 20px; line-height: 1.8; margin: 0 0 10px; }

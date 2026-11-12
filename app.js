@@ -172,7 +172,7 @@ function voiceFor(b) {
 }
 
 /* ---------- 我的錄音：使用者自己匯入、只存在這台裝置（不會上傳） ---------- */
-const APP_VER = 'k12';
+const APP_VER = 'k13';
 const MyRec = {
   books: new Set(), urls: new Map(), tm: null, ready: null, where: new Map(),
   CACHE: 'myrec-v1', key: b => `myrec/${String(b + 1).padStart(2, '0')}.opus`,
@@ -1271,6 +1271,57 @@ window.addEventListener('hashchange', e => {
   route();
 });
 route();
+
+/* ---------- 安裝按鈕（上方「安裝 Install／已安裝 Installed」） ---------- */
+let deferredPrompt = null;
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+function setInstallBtn(state) {   // 'install' | 'installed' | 'hide'
+  const bt = document.getElementById('installBtn'); if (!bt) return;
+  if (state === 'hide') { bt.hidden = true; return; }
+  bt.hidden = false; bt.classList.toggle('done', state === 'installed');
+  bt.innerHTML = state === 'installed' ? '<span>已安裝</span><small>Installed</small>' : '<span>安裝</span><small>Install</small>';
+}
+function showInstallHelp() {
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const steps = ios
+    ? '<li>用 <b>Safari</b> 打開這個網站</li><li>按下方的「分享」按鈕 <b>⬆︎</b></li><li>選「<b>加入主畫面</b>」，再按「新增」</li>'
+    : '<li>用 <b>Chrome</b> 打開這個網站</li><li>按右上角的 <b>⋮</b> 選單</li><li>選「<b>安裝應用程式</b>」或「<b>加到主畫面</b>」</li>';
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.innerHTML = `<div class="modal-card"><h2>安裝到主畫面 Install</h2><ol>${steps}</ol>
+    <p class="muted" style="font-size:13px">安裝後可以像一般 App 一樣從主畫面打開，也能離線閱讀。</p>
+    <button class="btn wide" type="button">知道了 OK</button></div>`;
+  box.onclick = e => { if (e.target === box || e.target.closest('button')) box.remove(); };
+  document.body.appendChild(box);
+}
+if (isStandalone()) setInstallBtn('hide');
+else {
+  setInstallBtn(store.get('installed', false) ? 'installed' : 'install');
+  if (navigator.getInstalledRelatedApps) navigator.getInstalledRelatedApps().then(l => { if (l && l.length) setInstallBtn('installed'); }).catch(() => { });
+}
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault(); deferredPrompt = e;
+  store.set('installed', false);            // 會出現安裝提示，代表目前沒有安裝
+  if (!isStandalone()) setInstallBtn('install');
+});
+window.addEventListener('appinstalled', () => {
+  deferredPrompt = null; store.set('installed', true);
+  setInstallBtn(isStandalone() ? 'hide' : 'installed');
+  toast('安裝完成 Installed', 3000);
+});
+document.getElementById('installBtn').onclick = async () => {
+  if (deferredPrompt) {
+    const p = deferredPrompt; deferredPrompt = null;
+    p.prompt();
+    const r = await p.userChoice.catch(() => null);
+    if (r && r.outcome === 'accepted') { store.set('installed', true); setInstallBtn('installed'); }
+    return;
+  }
+  if (document.getElementById('installBtn').classList.contains('done')) {
+    toast('已經安裝過了，可以從主畫面的「KJV PCE」圖示打開。 Already installed.', 4000); return;
+  }
+  showInstallHelp();
+};
 
 /* ---------- 離線支援 ---------- */
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
