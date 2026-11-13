@@ -288,3 +288,4 @@ body.pk-open { overflow: hidden; }
 .player-btns button { padding: 8px 10px; min-width: 64px; }
 .player-btns .pb-icon { min-width: 40px; padding: 6px 8px; display: inline-flex; align-items: center; justify-content: center; }
 .player-btns button[hidden] { display: none; }
+.seo-intro { padding: 8px 4px; } .seo-intro h1 { font-size: 20px; }
