@@ -289,3 +289,5 @@ body.pk-open { overflow: hidden; }
 .player-btns .pb-icon { min-width: 40px; padding: 6px 8px; display: inline-flex; align-items: center; justify-content: center; }
 .player-btns button[hidden] { display: none; }
 .seo-intro { padding: 8px 4px; } .seo-intro h1 { font-size: 20px; }
+.player-btns .pb-loop { opacity: .45; }
+.player-btns .pb-loop.on { opacity: 1; background: var(--accent); color: var(--accent-fg); }
